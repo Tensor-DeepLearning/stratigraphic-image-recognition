@@ -3,6 +3,21 @@ import tensorflow as tf
 import math
 import matplotlib.pyplot as plt
 
+def wiggle(data, lWidth=0.1):
+    sampleNum, traceNum = np.shape(data)
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    for i in range(traceNum):
+        traceData = data[:,i]
+        maxVal = np.amax(traceData)
+        ax.plot(i+traceData/maxVal, [j for j in range(sampleNum)], color='black', linewidth=lWidth)
+        for a in range(len(traceData)):
+            if(traceData[a] < 0):
+                traceData[a] = 0
+        ax.fill(i+traceData/maxVal, [j for j in range(sampleNum)], 'k', linewidth=0)
+    ax.axis([0,traceNum,sampleNum,0])
+    plt.show()
+
 def lrelu(x, leak=0.2, name="lrelu"):
     """Leaky rectifier.
     Parameters
@@ -33,11 +48,11 @@ def corrupt(x):
     x_corrupted : Tensor
         50 pct of values corrupted.
     """
-    return tf.mul(x, tf.cast(tf.random_uniform(shape=tf.shape(x), minval=0, maxval=2, dtype=tf.int32), tf.float32))
+    return tf.multiply(x, tf.cast(tf.random_uniform(shape=tf.shape(x), minval=0, maxval=2, dtype=tf.int32), tf.float32))
 # %%
 def autoencoder(input_shape, n_filters=[1, 10, 10, 10],
                 filter_sizes=[3, 3, 3, 3],
-                strides=[1, 1, 1, 1], padding='SAME'):
+                strides=[1, 2, 1, 1], padding='SAME'):
     """Build a deep denoising autoencoder w/ tied weights.
     Parameters
     ----------
@@ -111,7 +126,7 @@ def autoencoder(input_shape, n_filters=[1, 10, 10, 10],
         output = lrelu(tf.add(
             tf.nn.conv2d_transpose(
                 current_input, W,
-                tf.pack([tf.shape(x)[0], shape[1], shape[2], shape[3]]),
+                tf.stack([tf.shape(x)[0], shape[1], shape[2], shape[3]]),
                 strides, padding), b))
         current_input = output
 
@@ -131,7 +146,7 @@ if __name__ == '__main__':
                      filter_sizes=[3, 3, 3, 3], \
                      strides=[1, 2, 1, 1], \
                      padding='VALID')
-    data = np.load('../../data/model_data/6positions_24points.npy')
+    data = np.load('model_6positions_24points.npy')
     row_num, col_num, point_num = np.shape(data)
     data_num = row_num * col_num
     data_2d = np.zeros([data_num, point_num])
@@ -140,16 +155,18 @@ if __name__ == '__main__':
 
     max_val = np.max(data_2d)
     min_val = np.min(data_2d)
+    print('max_val:', max_val)
+    print('min_val:', min_val)
     data_2d = (data_2d-min_val)/(max_val-min_val)
 
     # %%
-    learning_rate = 0.001
+    learning_rate = 0.002
     optimizer = tf.train.AdamOptimizer(learning_rate).minimize(ae['cost'])
 
     # %%
     # We create a session to use the graph
     sess = tf.Session()
-    sess.run(tf.initialize_all_variables())
+    sess.run(tf.global_variables_initializer())
 
     # %%
     # Fit all training data
@@ -160,6 +177,31 @@ if __name__ == '__main__':
         if step % 100 == 0:
             print('step:%d'%step, 'cost:%f'%cost_)
 
+    x_disp = np.reshape(data_2d[200000], [1,point_num]);
+    z_disp, y_disp = sess.run([ae['z'], ae['y']], feed_dict={ae['x']:x_disp})
+    x_disp = np.reshape(x_disp[0], [6, 24])
+    y_disp = np.reshape(y_disp, [6, 24])
+    x_disp = x_disp.T;
+    y_disp = y_disp.T;
+    np.savetxt('Data\\origin.txt', x_disp)
+    np.savetxt('Data\\reconstruction.txt', y_disp)
+    for fg_i in range(10):
+        np.savetxt('Data\\feature'+str(fg_i)+'.txt',z_disp[0,:,:,fg_i])
+    fig=plt.subplot(121)
+    plt.imshow(x_disp)
+    fig.set_xticks([])
+    fig.set_yticks([])
+    fig=plt.subplot(122)
+    plt.imshow(y_disp)
+    fig.set_xticks([])
+    fig.set_yticks([])
+    plt.show()
+    #for fg_i in range(10):
+    #    fig=plt.subplot(2,5,fg_i+1)
+    #    plt.imshow(z_disp[0,:,:,fg_i])
+    #    fig.set_xticks([])
+    #    fig.set_yticks([])
+    #plt.show()
     output = tf.reshape(ae['z'], [-1, 100])
     features = sess.run(output, feed_dict={ae['x']:data_2d})
     print('the final shape:', np.shape(features))
@@ -167,14 +209,14 @@ if __name__ == '__main__':
     centroides = tf.Variable(tf.slice(tf.random_shuffle(features),[0,0],[k,-1]))
     expanded_features = tf.expand_dims(features, 0)
     expanded_centroides = tf.expand_dims(centroides, 1)
-    assignments = tf.argmin(tf.reduce_sum(tf.square(tf.sub(expanded_features, expanded_centroides)), 2), 0)
-    means = tf.concat(0, [tf.reduce_mean(tf.gather(features, tf.reshape(tf.where(tf.equal(assignments, c)), [1,-1])), 1) for c in range(k)])
+    assignments = tf.argmin(tf.reduce_sum(tf.square(tf.subtract(expanded_features, expanded_centroides)), 2), 0)
+    means = tf.concat(axis=0, values=[tf.reduce_mean(tf.gather(features, tf.reshape(tf.where(tf.equal(assignments, c)), [1,-1])), 1) for c in range(k)])
     
     update_centroides = tf.assign(centroides, means)
     
     y = tf.placeholder('float')
     
-    init_op = tf.initialize_all_variables()
+    init_op = tf.global_variables_initializer()
     sess.run(init_op)
     
     for step in range(150):
